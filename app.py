@@ -4,139 +4,124 @@ import gspread
 import plotly.graph_objects as go
 import numpy as np
 from datetime import datetime
+import os
+import json
 
-# 1. Konfigurace a Styl
-st.set_page_config(page_title="Alpha Tracker", layout="centered")
-
-st.markdown("""
-    <style>
-    .main { background-color: #0E1117; }
-    div[data-testid="stMetricValue"] { font-size: 32px; color: #00E676; }
-    .stRadio [role=radiogroup] { margin-top: -20px; }
-    </style>
-    """, unsafe_allow_html=True)
+# --- KONFIGURACE ---
+st.set_page_config(page_title="Alpha Tracker Pro", layout="centered")
 
 SHEET_ID = "10iaHG09CdNfeOxI5kYEYWH9V3BHTddgvMdAAaji0Vd4"
 JSON_FILE = "denni-rozspis-0787b08cb57c.json"
 
-# --- CACHING (Ochrana proti 429 Erroru) ---
+# --- LOGIN SYSTÉM ---
+def check_password():
+    if "logged_in" not in st.session_state:
+        st.title("🔐 Alpha Access")
+        user = st.text_input("Uživatel")
+        password = st.text_input("Heslo", type="password")
+        if st.button("Vstoupit", use_container_width=True):
+            if "passwords" in st.secrets and user in st.secrets["passwords"] and password == st.secrets["passwords"][user]:
+                st.session_state["logged_in"] = True
+                st.session_state["user_role"] = "admin" if user == "admin" else "user"
+                st.session_state["username"] = user
+                st.rerun()
+            else:
+                st.error("Nesprávné jméno nebo heslo.")
+        return False
+    return True
 
+# --- DATOVÉ FUNKCE ---
 @st.cache_resource
 def get_sheet():
-    # 1. Zkusíme, jestli jsme v cloudu (mobilu) a máme "Secrets"
-    if "gspread_creds" in st.secrets:
-        import json
+    if os.path.exists(JSON_FILE):
+        gc = gspread.service_account(filename=JSON_FILE)
+    else:
         creds_dict = json.loads(st.secrets["gspread_creds"])
         gc = gspread.service_account_from_dict(creds_dict)
-    # 2. Pokud ne, zkusíme to postaru přes soubor (jen pro tvůj počítač)
-    else:
-        gc = gspread.service_account(filename=JSON_FILE)
-    
     return gc.open_by_key(SHEET_ID)
 
-@st.cache_data(ttl=60) 
+@st.cache_data(ttl=60)
 def get_dataframes():
-    # Stáhne data z tabulky a pamatuje si je 60 vteřin
     sh = get_sheet()
     df_d = pd.DataFrame(sh.worksheet("Data").get_all_records())
     df_c = pd.DataFrame(sh.worksheet("List1").get_all_records())
     return df_d, df_c
 
-try:
-    # Načtení z cache
-    sh = get_sheet()
-    df_data, df_config = get_dataframes()
-
-    # --- BODY NAHORU ---
-    col1, col2 = st.columns(2)
-    with col1:
-        st.title("Alpha Tracker")
-    with col2:
+# --- HLAVNÍ APLIKACE ---
+if check_password():
+    try:
+        sh = get_sheet()
+        df_data, df_config = get_dataframes()
+        
+        # Header s metrikou
         today_str = datetime.now().strftime("%Y-%m-%d")
         today_pts = df_data[df_data['datum'] == today_str]['body'].sum() if not df_data.empty else 0
-        st.metric("DNEŠNÍ SKÓRE", f"{today_pts} pts")
+        
+        c1, c2 = st.columns([2, 1])
+        c1.title(f"Vítej, {st.session_state['username']}! 👋")
+        c2.metric("DNEŠNÍ SCORE", f"{today_pts} pts")
 
-    # Menu
-    stranka = st.radio("Navigace", ["🚀 Akce", "📈 Trading View", "📜 Historie"], horizontal=True, label_visibility="collapsed")
+        # Rozdělení na karty podle role
+        tab_list = ["🚀 Akce", "📈 Statistiky"]
+        if st.session_state["user_role"] == "admin":
+            tab_list.append("⚙️ Admin Panel")
+        
+        tabs = st.tabs(tab_list)
 
-    if stranka == "🚀 Akce":
-        st.subheader("Dnešní cíle")
-        datum = st.date_input("Datum", datetime.now())
-        
-        vybrane_aktivity = []
-        celkem_bodu = 0
-        barvy = {"Zdraví & Vitalita": "green", "Produktivita & Růst": "blue", "Vztahy & Emoce": "orange", "Anti-Prokrastinace": "red"}
-        
-        for kat in df_config['Kategorie'].unique():
-            barva = barvy.get(kat, "gray")
-            with st.expander(f":{barva}[📂 {kat}]"):
-                kat_df = df_config[df_config['Kategorie'] == kat]
-                for _, row in kat_df.iterrows():
-                    if st.checkbox(f"{row['Aktivita']} ({row['Body']} b)", key=f"{row['Aktivita']}_{kat}"):
-                        vybrane_aktivity.append(row['Aktivita'])
-                        celkem_bodu += float(row['Body'])
-        
-        if st.button("LOGOVAT VÝKON", use_container_width=True):
-            if vybrane_aktivity:
-                data_ws = sh.worksheet("Data")
-                data_ws.append_row([str(datum), ", ".join(vybrane_aktivity), celkem_bodu])
+        # TAB 1: AKCE
+        with tabs[0]:
+            st.subheader("Dnešní mise")
+            datum = st.date_input("Datum", datetime.now())
+            
+            vybrane_aktivity = []
+            celkem_bodu = 0
+            barvy = {"Zdraví & Vitalita": "green", "Produktivita & Růst": "blue", "Vztahy & Emoce": "orange", "Anti-Prokrastinace": "red"}
+            
+            for kat in df_config['Kategorie'].unique():
+                barva = barvy.get(kat, "gray")
+                with st.expander(f":{barva}[📂 {kat}]"):
+                    kat_df = df_config[df_config['Kategorie'] == kat]
+                    for _, row in kat_df.iterrows():
+                        if st.checkbox(f"{row['Aktivita']} (+{row['Body']})", key=f"{row['Aktivita']}_{st.session_state['username']}"):
+                            vybrane_aktivity.append(row['Aktivita'])
+                            celkem_bodu += float(row['Body'])
+            
+            if st.button("LOGOVAT VÝKON", type="primary", use_container_width=True):
+                if vybrane_aktivity:
+                    sh.worksheet("Data").append_row([str(datum), ", ".join(vybrane_aktivity), celkem_bodu, st.session_state['username']])
+                    get_dataframes.clear()
+                    st.success("Zapsáno! Držíš linii.")
+                    st.rerun()
+
+        # TAB 2: STATISTIKY
+        with tabs[1]:
+            st.subheader("Performance Chart")
+            # Filtrování dat podle uživatele (Admin vidí vše, User jen své)
+            plot_df = df_data.copy()
+            if st.session_state["user_role"] != "admin":
+                # Předpokládáme, že ve sloupci 4 (index 3) je jméno uživatele
+                plot_df = plot_df[plot_df['uzivatel'] == st.session_state['username']] if 'uzivatel' in plot_df.columns else plot_df
+
+            if not plot_df.empty:
+                plot_df['body'] = pd.to_numeric(plot_df['body'])
+                plot_df = plot_df.groupby('datum', as_index=False)['body'].sum().sort_values('datum')
                 
-                # Smazání paměti, aby se hned načetla čerstvá data do grafu!
-                get_dataframes.clear() 
-                
-                st.success("Data zapsána do blockchainu tabulky.")
-                st.rerun()
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(x=plot_df['datum'], y=plot_df['body'], mode='lines+markers', 
+                                         line=dict(color='#00E676', width=4, shape='spline')))
+                fig.update_layout(template="plotly_dark", height=300, margin=dict(l=10, r=10, t=10, b=10))
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("Zatím žádná data k zobrazení.")
 
-    elif stranka == "📈 Trading View":
-        st.subheader("Performance Chart")
-        if len(df_data) > 0:
-            df_data['body'] = pd.to_numeric(df_data['body'])
-            df_data = df_data.groupby('datum', as_index=False)['body'].sum()
-            df_data = df_data.sort_values('datum')
-            
-            fig = go.Figure()
-            
-            # Hlavní neonová čára (zaoblená - spline)
-            fig.add_trace(go.Scatter(
-                x=df_data['datum'], 
-                y=df_data['body'], 
-                mode='lines+markers', 
-                name='Denní body', 
-                line=dict(color='#00E676', width=4, shape='spline'),
-                marker=dict(size=8, color='#00E676', line=dict(width=2, color='white'))
-            ))
-            
-            # Žlutá/Oranžová Trendovka
-            if len(df_data) > 1: 
-                y = df_data['body'].values
-                x = np.arange(len(y))
-                z = np.polyfit(x, y, 1)
-                p = np.poly1d(z)
-                fig.add_trace(go.Scatter(
-                    x=df_data['datum'], 
-                    y=p(x), 
-                    mode='lines', 
-                    name='Trend', 
-                    line=dict(color='#FFB300', width=2, dash='dash')
-                ))
+        # TAB 3: ADMIN (pouze pro Admina)
+        if st.session_state["user_role"] == "admin":
+            with tabs[2]:
+                st.subheader("Kompletní historie (všechny logs)")
+                st.dataframe(df_data.tail(20), use_container_width=True)
+                if st.button("Odhlásit se"):
+                    del st.session_state["logged_in"]
+                    st.rerun()
 
-            # Styling aby to vypadalo jako v ukázce
-            fig.update_layout(
-                template="plotly_dark", 
-                plot_bgcolor='#161A25', 
-                paper_bgcolor='rgba(0,0,0,0)', 
-                margin=dict(l=20, r=20, t=30, b=20),
-                xaxis=dict(showgrid=True, gridcolor='#2D3342', gridwidth=1),
-                yaxis=dict(showgrid=True, gridcolor='#2D3342', gridwidth=1, title="Body")
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Nahraj aspoň 2 dny dat pro zobrazení trendu.")
-
-    elif stranka == "📜 Historie":
-        st.subheader("Poslední záznamy")
-        st.dataframe(df_data.tail(10), use_container_width=True)
-
-except Exception as e:
-    st.error(f"Error: {e}")
+    except Exception as e:
+        st.error(f"Systémový pád: {e}")
