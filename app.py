@@ -45,44 +45,46 @@ def get_dataframes():
     sh = get_sheet()
     df_d = pd.DataFrame(sh.worksheet("Data").get_all_records())
     df_c = pd.DataFrame(sh.worksheet("List1").get_all_records())
-    return df_d, df_c
+    # Načtení milníků
+    try:
+        df_m = pd.DataFrame(sh.worksheet("Milníky").get_all_records())
+    except:
+        df_m = pd.DataFrame(columns=["Aktivita", "Body", "Splněno"])
+    return df_d, df_c, df_m
 
 # --- HLAVNÍ APLIKACE ---
 if check_password():
     try:
         sh = get_sheet()
-        df_data, df_config = get_dataframes()
-        
-        # Header s metrikou
+        df_data, df_config, df_milniky = get_dataframes()
         today_str = datetime.now().strftime("%Y-%m-%d")
-        today_pts = df_data[df_data['datum'] == today_str]['body'].sum() if not df_data.empty else 0
         
+        # Header
+        today_pts = df_data[df_data['datum'] == today_str]['body'].sum() if not df_data.empty else 0
         c1, c2 = st.columns([2, 1])
-        c1.title(f"Vítej, {st.session_state['username']}! 👋")
-        c2.metric("DNEŠNÍ SCORE", f"{today_pts} pts")
+        c1.title(f"Alpha Tracker")
+        c2.metric("DNES", f"{today_pts} pts")
 
-        # Rozdělení na karty podle role
-        tab_list = ["🚀 Akce", "📈 Statistiky"]
+        # Karty
+        tab_list = ["🚀 Akce", "🏆 Milníky", "📈 Statistiky"]
         if st.session_state["user_role"] == "admin":
-            tab_list.append("⚙️ Admin Panel")
+            tab_list.append("⚙️ Admin")
         
         tabs = st.tabs(tab_list)
 
-        # TAB 1: AKCE
+        # TAB 1: DENNÍ AKCE
         with tabs[0]:
-            st.subheader("Dnešní mise")
+            st.subheader("Dnešní cíle")
             datum = st.date_input("Datum", datetime.now())
-            
             vybrane_aktivity = []
             celkem_bodu = 0
             barvy = {"Zdraví & Vitalita": "green", "Produktivita & Růst": "blue", "Vztahy & Emoce": "orange", "Anti-Prokrastinace": "red"}
             
             for kat in df_config['Kategorie'].unique():
-                barva = barvy.get(kat, "gray")
-                with st.expander(f":{barva}[📂 {kat}]"):
+                with st.expander(f"📂 {kat}"):
                     kat_df = df_config[df_config['Kategorie'] == kat]
                     for _, row in kat_df.iterrows():
-                        if st.checkbox(f"{row['Aktivita']} (+{row['Body']})", key=f"{row['Aktivita']}_{st.session_state['username']}"):
+                        if st.checkbox(f"{row['Aktivita']} (+{row['Body']})", key=f"d_{row['Aktivita']}"):
                             vybrane_aktivity.append(row['Aktivita'])
                             celkem_bodu += float(row['Body'])
             
@@ -90,38 +92,46 @@ if check_password():
                 if vybrane_aktivity:
                     sh.worksheet("Data").append_row([str(datum), ", ".join(vybrane_aktivity), celkem_bodu, st.session_state['username']])
                     get_dataframes.clear()
-                    st.success("Zapsáno! Držíš linii.")
                     st.rerun()
 
-        # TAB 2: STATISTIKY
+        # TAB 2: MILNÍKY (Globální cíle)
         with tabs[1]:
-            st.subheader("Performance Chart")
-            # Filtrování dat podle uživatele (Admin vidí vše, User jen své)
-            plot_df = df_data.copy()
-            if st.session_state["user_role"] != "admin":
-                # Předpokládáme, že ve sloupci 4 (index 3) je jméno uživatele
-                plot_df = plot_df[plot_df['uzivatel'] == st.session_state['username']] if 'uzivatel' in plot_df.columns else plot_df
+            st.subheader("Jednorázové úspěchy")
+            milniky_ws = sh.worksheet("Milníky")
+            for i, row in df_milniky.iterrows():
+                if row['Splněno'] == 0:
+                    if st.checkbox(f"🚩 {row['Aktivita']} (+{row['Body']} pts)", key=f"m_{i}"):
+                        sh.worksheet("Data").append_row([today_str, f"MILNÍK: {row['Aktivita']}", row['Body'], st.session_state['username']])
+                        milniky_ws.update_cell(i + 2, 3, 1) # Označí jako splněno v Excelu
+                        get_dataframes.clear()
+                        st.success(f"Dosaženo: {row['Aktivita']}")
+                        st.rerun()
+                else:
+                    st.write(f"✅ ~~{row['Aktivita']}~~")
 
+        # TAB 3: STATISTIKY
+        with tabs[2]:
+            st.subheader("Performance")
+            plot_df = df_data.copy()
+            if st.session_state["user_role"] != "admin" and 'uzivatel' in plot_df.columns:
+                plot_df = plot_df[plot_df['uzivatel'] == st.session_state['username']]
+            
             if not plot_df.empty:
                 plot_df['body'] = pd.to_numeric(plot_df['body'])
                 plot_df = plot_df.groupby('datum', as_index=False)['body'].sum().sort_values('datum')
-                
                 fig = go.Figure()
-                fig.add_trace(go.Scatter(x=plot_df['datum'], y=plot_df['body'], mode='lines+markers', 
-                                         line=dict(color='#00E676', width=4, shape='spline')))
-                fig.update_layout(template="plotly_dark", height=300, margin=dict(l=10, r=10, t=10, b=10))
+                fig.add_trace(go.Scatter(x=plot_df['datum'], y=plot_df['body'], mode='lines+markers', line=dict(color='#00E676', width=4)))
+                fig.update_layout(template="plotly_dark", height=300)
                 st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("Zatím žádná data k zobrazení.")
 
-        # TAB 3: ADMIN (pouze pro Admina)
+        # TAB 4: ADMIN
         if st.session_state["user_role"] == "admin":
-            with tabs[2]:
-                st.subheader("Kompletní historie (všechny logs)")
-                st.dataframe(df_data.tail(20), use_container_width=True)
-                if st.button("Odhlásit se"):
+            with tabs[3]:
+                st.write(f"Přihlášen: {st.session_state['username']}")
+                st.dataframe(df_data.tail(15), use_container_width=True)
+                if st.button("Odhlásit"):
                     del st.session_state["logged_in"]
                     st.rerun()
 
     except Exception as e:
-        st.error(f"Systémový pád: {e}")
+        st.error(f"Chyba: {e}")
