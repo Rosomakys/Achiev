@@ -78,10 +78,18 @@ if check_password():
             datum = st.date_input("Datum", datetime.now())
             vybrane_aktivity = []
             celkem_bodu = 0
-            barvy = {"Zdraví & Vitalita": "green", "Produktivita & Růst": "blue", "Vztahy & Emoce": "orange", "Anti-Prokrastinace": "red"}
+            
+            # Mapování barev na tvoje nové kategorie
+            barvy = {
+                "Trading Disciplína": "red",
+                "Biohacking": "blue",
+                "Produktivita": "orange",
+                "Zdraví & Vitalita": "green"
+            }
             
             for kat in df_config['Kategorie'].unique():
-                with st.expander(f"📂 {kat}"):
+                barva = barvy.get(kat, "gray") # Pokud není v seznamu, bude šedá
+                with st.expander(f":{barva}[📂 {kat}]"):
                     kat_df = df_config[df_config['Kategorie'] == kat]
                     for _, row in kat_df.iterrows():
                         if st.checkbox(f"{row['Aktivita']} (+{row['Body']})", key=f"d_{row['Aktivita']}"):
@@ -92,6 +100,7 @@ if check_password():
                 if vybrane_aktivity:
                     sh.worksheet("Data").append_row([str(datum), ", ".join(vybrane_aktivity), celkem_bodu, st.session_state['username']])
                     get_dataframes.clear()
+                    st.success("Dnešní progres zapsán!")
                     st.rerun()
 
        # TAB 2: MILNÍKY (Globální cíle)
@@ -127,7 +136,7 @@ if check_password():
                         st.write(f"✅ ~~{row['Aktivita']}~~")
             else:
                 st.info("V Excelu zatím nejsou žádné milníky.")
-                
+
         # TAB 3: STATISTIKY
         with tabs[2]:
             st.subheader("Performance")
