@@ -45,11 +45,11 @@ def get_dataframes():
     sh = get_sheet()
     df_d = pd.DataFrame(sh.worksheet("Data").get_all_records())
     df_c = pd.DataFrame(sh.worksheet("List1").get_all_records())
-    # Načtení milníků
+    # Načtení milníků s novými sloupci
     try:
         df_m = pd.DataFrame(sh.worksheet("Milníky").get_all_records())
     except:
-        df_m = pd.DataFrame(columns=["Aktivita", "Body", "Splněno"])
+        df_m = pd.DataFrame(columns=["Oblast", "Kategorie", "Aktivita", "Body", "Splněno"])
     return df_d, df_c, df_m
 
 # --- HLAVNÍ APLIKACE ---
@@ -94,21 +94,40 @@ if check_password():
                     get_dataframes.clear()
                     st.rerun()
 
-        # TAB 2: MILNÍKY (Globální cíle)
+       # TAB 2: MILNÍKY (Globální cíle)
         with tabs[1]:
             st.subheader("Jednorázové úspěchy")
             milniky_ws = sh.worksheet("Milníky")
-            for i, row in df_milniky.iterrows():
-                if row['Splněno'] == 0:
-                    if st.checkbox(f"🚩 {row['Aktivita']} (+{row['Body']} pts)", key=f"m_{i}"):
-                        sh.worksheet("Data").append_row([today_str, f"MILNÍK: {row['Aktivita']}", row['Body'], st.session_state['username']])
-                        milniky_ws.update_cell(i + 2, 3, 1) # Označí jako splněno v Excelu
-                        get_dataframes.clear()
-                        st.success(f"Dosaženo: {row['Aktivita']}")
-                        st.rerun()
-                else:
-                    st.write(f"✅ ~~{row['Aktivita']}~~")
 
+            if not df_milniky.empty:
+                # 1. Filtr na Oblast (ČR / Svět)
+                oblasti = df_milniky['Oblast'].unique()
+                vybrana_oblast = st.radio("Lokalita", oblasti, horizontal=True)
+
+                # 2. Filtr na Kategorie (Hory / Památky...) podle vybrané oblasti
+                kat_v_oblasti = df_milniky[df_milniky['Oblast'] == vybrana_oblast]['Kategorie'].unique()
+                vybrana_kat = st.selectbox("Kategorie", kat_v_oblasti)
+
+                # Filtrovaná data pro zobrazení
+                df_filtrovane = df_milniky[(df_milniky['Oblast'] == vybrana_oblast) & (df_milniky['Kategorie'] == vybrana_kat)]
+
+                for i, row in df_filtrovane.iterrows():
+                    if row['Splněno'] == 0:
+                        if st.checkbox(f"🚩 {row['Aktivita']} (+{row['Body']} pts)", key=f"m_{i}"):
+                            # Zápis do logu (Data)
+                            sh.worksheet("Data").append_row([today_str, f"MILNÍK: {row['Aktivita']}", row['Body'], st.session_state['username']])
+                            
+                            # KLÍČOVÁ ZMĚNA: Index 5 znamená sloupec E (Splněno)
+                            milniky_ws.update_cell(i + 2, 5, 1) 
+                            
+                            get_dataframes.clear()
+                            st.success(f"Dosaženo: {row['Aktivita']}")
+                            st.rerun()
+                    else:
+                        st.write(f"✅ ~~{row['Aktivita']}~~")
+            else:
+                st.info("V Excelu zatím nejsou žádné milníky.")
+                
         # TAB 3: STATISTIKY
         with tabs[2]:
             st.subheader("Performance")
