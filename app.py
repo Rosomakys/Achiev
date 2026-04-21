@@ -23,8 +23,15 @@ JSON_FILE = "denni-rozspis-0787b08cb57c.json"
 
 @st.cache_resource
 def get_sheet():
-    # Připojí se ke Googlu jen jednou a pamatuje si spojení
-    gc = gspread.service_account(filename=JSON_FILE)
+    # 1. Zkusíme, jestli jsme v cloudu (mobilu) a máme "Secrets"
+    if "gspread_creds" in st.secrets:
+        import json
+        creds_dict = json.loads(st.secrets["gspread_creds"])
+        gc = gspread.service_account_from_dict(creds_dict)
+    # 2. Pokud ne, zkusíme to postaru přes soubor (jen pro tvůj počítač)
+    else:
+        gc = gspread.service_account(filename=JSON_FILE)
+    
     return gc.open_by_key(SHEET_ID)
 
 @st.cache_data(ttl=60) 
